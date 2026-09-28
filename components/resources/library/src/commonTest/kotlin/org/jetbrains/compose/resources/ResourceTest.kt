@@ -55,11 +55,11 @@ class ResourceTest {
             resource.getResourceItemByEnvironment(env("de", "US", LIGHT, LDPI)).path
         )
         assertEquals(
-            "default",
+            "de-rUS",
             resource.getResourceItemByEnvironment(env("de", "", LIGHT, LDPI)).path
         )
         assertEquals(
-            "default",
+            "de-rUS",
             resource.getResourceItemByEnvironment(env("de", "IN", LIGHT, LDPI)).path
         )
         assertEquals(
@@ -217,5 +217,240 @@ class ResourceTest {
             "default",
             resource.getResourceItemByEnvironment(env("en", "", "US")).path
         )
+    }
+
+    @Test
+    fun testGetPathByPrioritizedLocales() {
+        val resource = DrawableResource(
+            id = "ImageResource:multilocale_test",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("en")), "en", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("en"), RegionQualifier("US")), "en-US", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("fr"), RegionQualifier("FR")), "fr-FR", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("es")), "es", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("es"), RegionQualifier("ES")), "es-ES", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("de")), "de", -1, -1),
+            )
+        )
+
+        fun multiLocaleEnv(vararg locales: LocaleQualifiers) = ResourceEnvironment(
+            locales = locales.toList(),
+            theme = LIGHT,
+            density = MDPI
+        )
+
+        // Case 1: First preferred locale matches exact region
+        assertEquals(
+            "fr-FR",
+            resource.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("fr", "", "FR"),
+                    LocaleQualifiers("es", "", "ES"),
+                    LocaleQualifiers("en", "", "US")
+                )
+            ).path
+        )
+
+        // Case 2: Same language, other region still matches (Android parent-locale).
+        // fr-CA with only fr-FR must not skip French for Spanish.
+        assertEquals(
+            "fr-FR",
+            resource.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("fr", "", "CA"),
+                    LocaleQualifiers("es", "", "MX"),
+                    LocaleQualifiers("en", "", "US")
+                )
+            ).path
+        )
+
+        // Case 3: First preferred locale (it-IT) has no match, second preferred locale (pt-BR) has no match,
+        // third preferred locale (de-DE) matches base "de"
+        assertEquals(
+            "de",
+            resource.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("it", "", "IT"),
+                    LocaleQualifiers("pt", "", "BR"),
+                    LocaleQualifiers("de", "", "DE")
+                )
+            ).path
+        )
+
+        // Case 4: None of the preferred locales match -> fallback to default
+        assertEquals(
+            "default",
+            resource.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("ja", "", "JP"),
+                    LocaleQualifiers("ko", "", "KR"),
+                    LocaleQualifiers("ru", "", "RU")
+                )
+            ).path
+        )
+
+        // Case 5: Regional fallback within primary language takes precedence over secondary language
+        // (fr-CA matches base "fr" when base "fr" exists)
+        val resourceWithBaseFr = DrawableResource(
+            id = "ImageResource:base_fr_test",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("fr")), "fr", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("es"), RegionQualifier("ES")), "es-ES", -1, -1)
+            )
+        )
+        assertEquals(
+            "fr",
+            resourceWithBaseFr.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("fr", "", "CA"),
+                    LocaleQualifiers("es", "", "ES")
+                )
+            ).path
+        )
+
+        // Case 6: Script isolation across prioritized locales
+        // zh-Hans-CN must not cross to zh-Hant; it should advance to second preferred locale (en)
+        val resourceWithScript = DrawableResource(
+            id = "ImageResource:script_fallback_test",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("zh"), ScriptQualifier("Hant")), "zh-Hant", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("en")), "en", -1, -1)
+            )
+        )
+        assertEquals(
+            "en",
+            resourceWithScript.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("zh", "Hans", "CN"),
+                    LocaleQualifiers("en", "", "US")
+                )
+            ).path
+        )
+
+        // Case 7: English tagged as values-en beats a later Spanish locale
+        val resourceWithEnAndEs = DrawableResource(
+            id = "ImageResource:en_es_test",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("en")), "en", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("es")), "es", -1, -1),
+            )
+        )
+        assertEquals(
+            "en",
+            resourceWithEnAndEs.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("en", "", "IN"),
+                    LocaleQualifiers("es", "", "US")
+                )
+            ).path
+        )
+
+        // Case 8: Unqualified values/ is last resort, not English. en-IN then es → es
+        val resourceDefaultAndEs = DrawableResource(
+            id = "ImageResource:default_es_test",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("es")), "es", -1, -1),
+            )
+        )
+        assertEquals(
+            "es",
+            resourceDefaultAndEs.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("en", "", "IN"),
+                    LocaleQualifiers("es", "", "US")
+                )
+            ).path
+        )
+
+        // Case 9: Region-only Chinese folders pick likely script (CLDR)
+        val resourceZhRegionOnly = DrawableResource(
+            id = "ImageResource:zh_region_test",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("zh"), RegionQualifier("CN")), "zh-rCN", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("zh"), RegionQualifier("TW")), "zh-rTW", -1, -1),
+            )
+        )
+        assertEquals(
+            "zh-rTW",
+            resourceZhRegionOnly.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("zh", "Hant", "US"),
+                    LocaleQualifiers("en", "", "US")
+                )
+            ).path
+        )
+        assertEquals(
+            "zh-rCN",
+            resourceZhRegionOnly.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("zh", "Hans", ""),
+                    LocaleQualifiers("en", "", "US")
+                )
+            ).path
+        )
+
+        // Case 10: several other-region folders must resolve to one file, not "more than one file"
+        val resourceSiblingRegions = DrawableResource(
+            id = "ImageResource:sibling_regions",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("fr"), RegionQualifier("FR")), "fr-FR", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("fr"), RegionQualifier("BE")), "fr-BE", -1, -1),
+            )
+        )
+        assertEquals(
+            "fr-BE",
+            resourceSiblingRegions.getResourceItemByEnvironment(
+                multiLocaleEnv(LocaleQualifiers("fr", "", "CA"))
+            ).path
+        )
+    }
+
+    @Test
+    fun testSelectResourceLocalesPrefersOsListWhenComposeHasOne() {
+        val compose = listOf(LocaleQualifiers("en", "", "US"))
+        val system = listOf(
+            LocaleQualifiers("zh", "Hans", "CN"),
+            LocaleQualifiers("en", "", "US"),
+        )
+        assertEquals(system, selectResourceLocales(compose, system))
+    }
+
+    @Test
+    fun testSelectResourceLocalesKeepsComposeWhenItAlreadyHasFallbacks() {
+        val compose = listOf(
+            LocaleQualifiers("de", "", "DE"),
+            LocaleQualifiers("en", "", "US"),
+        )
+        val system = listOf(
+            LocaleQualifiers("fr", "", "FR"),
+            LocaleQualifiers("es", "", "ES"),
+        )
+        assertEquals(compose, selectResourceLocales(compose, system))
+    }
+
+    @Test
+    fun testSelectResourceLocalesPrependsComposeOverride() {
+        val compose = listOf(LocaleQualifiers("de", "", "DE"))
+        val system = listOf(
+            LocaleQualifiers("fr", "", "FR"),
+            LocaleQualifiers("es", "", "ES"),
+        )
+        assertEquals(listOf(compose.single()) + system, selectResourceLocales(compose, system))
+    }
+
+    @Test
+    fun testSelectResourceLocalesUsesSystemWhenComposeIsEmpty() {
+        val system = listOf(
+            LocaleQualifiers("hi", "", "IN"),
+            LocaleQualifiers("en", "", "US"),
+        )
+        assertEquals(system, selectResourceLocales(emptyList(), system))
     }
 }

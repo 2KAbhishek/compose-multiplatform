@@ -4,23 +4,36 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.intl.Locale
+import androidx.compose.ui.text.intl.LocaleList
 
 class ResourceEnvironment internal constructor(
-    internal val language: LanguageQualifier,
-    internal val script: ScriptQualifier,
-    internal val region: RegionQualifier,
+    internal val locales: List<LocaleQualifiers>,
     internal val theme: ThemeQualifier,
     internal val density: DensityQualifier
 ) {
+    internal val language: LanguageQualifier get() = locales.firstOrNull()?.language ?: LanguageQualifier("")
+    internal val script: ScriptQualifier get() = locales.firstOrNull()?.script ?: ScriptQualifier("")
+    internal val region: RegionQualifier get() = locales.firstOrNull()?.region ?: RegionQualifier("")
+
+    internal constructor(
+        language: LanguageQualifier,
+        script: ScriptQualifier,
+        region: RegionQualifier,
+        theme: ThemeQualifier,
+        density: DensityQualifier
+    ) : this(
+        locales = listOf(LocaleQualifiers(language, script, region)),
+        theme = theme,
+        density = density
+    )
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other == null || this::class != other::class) return false
 
         other as ResourceEnvironment
 
-        if (language != other.language) return false
-        if (script != other.script) return false
-        if (region != other.region) return false
+        if (locales != other.locales) return false
         if (theme != other.theme) return false
         if (density != other.density) return false
 
@@ -28,9 +41,7 @@ class ResourceEnvironment internal constructor(
     }
 
     override fun hashCode(): Int {
-        var result = language.hashCode()
-        result = 31 * result + script.hashCode()
-        result = 31 * result + region.hashCode()
+        var result = locales.hashCode()
         result = 31 * result + theme.hashCode()
         result = 31 * result + density.hashCode()
         return result
@@ -45,18 +56,35 @@ internal interface ComposeEnvironment {
 internal val DefaultComposeEnvironment = object : ComposeEnvironment {
     @Composable
     override fun rememberEnvironment(): ResourceEnvironment {
-        val composeLocale = Locale.current
+        val composeLocales = LocaleList.current
         val composeTheme = isSystemInDarkTheme()
         val composeDensity = LocalDensity.current
 
         //cache ResourceEnvironment unless compose environment is changed
-        return remember(composeLocale, composeTheme, composeDensity) {
+        return remember(composeLocales, composeTheme, composeDensity) {
+            val composeMapped = if (composeLocales.isEmpty()) {
+                val single = Locale.current
+                listOf(
+                    LocaleQualifiers(
+                        LanguageQualifier(single.language),
+                        ScriptQualifier(single.script),
+                        RegionQualifier(single.region)
+                    )
+                )
+            } else {
+                composeLocales.map {
+                    LocaleQualifiers(
+                        LanguageQualifier(it.language),
+                        ScriptQualifier(it.script),
+                        RegionQualifier(it.region)
+                    )
+                }
+            }
+            val locales = selectResourceLocales(composeMapped, getResourceEnvironment().locales)
             ResourceEnvironment(
-                LanguageQualifier(composeLocale.language),
-                ScriptQualifier(composeLocale.script),
-                RegionQualifier(composeLocale.region),
-                ThemeQualifier.selectByValue(composeTheme),
-                DensityQualifier.selectByDensity(composeDensity.density)
+                locales = locales,
+                theme = ThemeQualifier.selectByValue(composeTheme),
+                density = DensityQualifier.selectByDensity(composeDensity.density)
             )
         }
     }
@@ -78,6 +106,31 @@ fun rememberResourceEnvironment(): ResourceEnvironment {
     return composeEnvironment.rememberEnvironment()
 }
 
+/**
+ * Chooses the locale list used for resource matching.
+ *
+ * [androidx.compose.ui.text.intl.LocaleList] is used as-is when it already contains a
+ * fallback chain (size > 1). That is the Android and iOS case.
+ *
+ * On JVM desktop, [LocaleList] is often a single platform-default locale even when the OS
+ * has a preference list. When Compose reports only one locale and the OS has more, the OS
+ * list is used.
+ *
+ * A single Compose locale whose language is not in the OS list is treated as an explicit
+ * override and is prepended to the OS list.
+ */
+internal fun selectResourceLocales(
+    composeLocales: List<LocaleQualifiers>,
+    systemLocales: List<LocaleQualifiers>
+): List<LocaleQualifiers> {
+    if (composeLocales.size > 1) return composeLocales
+    if (systemLocales.size <= 1) return composeLocales.ifEmpty { systemLocales }
+    val compose = composeLocales.singleOrNull() ?: return systemLocales
+    val languageInSystem = systemLocales.any { it.language == compose.language }
+    if (!languageInSystem) return listOf(compose) + systemLocales
+    return systemLocales
+}
+
 internal expect fun getSystemEnvironment(): ResourceEnvironment
 
 //the function reference will be overridden for tests
@@ -94,7 +147,7 @@ fun getSystemResourceEnvironment(): ResourceEnvironment = getResourceEnvironment
 internal fun Resource.getResourceItemByEnvironment(environment: ResourceEnvironment): ResourceItem {
     //Priority of environments: https://developer.android.com/guide/topics/resources/providing-resources#table2
     items.toList()
-        .filterByLocale(environment.language, environment.script, environment.region)
+        .filterByLocales(environment.locales)
         .also { if (it.size == 1) return it.first() }
         .filterBy(environment.theme)
         .also { if (it.size == 1) return it.first() }
@@ -170,50 +223,122 @@ private fun List<ResourceItem>.filterByDensity(density: DensityQualifier): List<
     }
 }
 
-// Filter by language, script, and region together (extended from the original lang+region logic):
+// Filter by prioritized list of locales.
+// For each locale in the prioritized list (e.g. [fr-CA, es-US, en-US]):
 // 1) exact language + script + region -> use it
 // 2) language + script (no region) -> use it
 // 3) language + region (no script) -> use it
 // 4) language only (no script, no region) -> use it
-// 5) items with NO locale qualifiers at all (default)
-// When the environment script is empty (e.g. DefaultComposeEnvironment), prefer items without
+// 5) same language, other region (Android parent-locale), when allowed
+// If none of the preferred locales match:
+// 6) items with NO locale qualifiers at all (default)
+// When the environment script is empty, prefer items without
 // a ScriptQualifier first; fall back to script-tagged items only if nothing else matches.
 // issue: https://github.com/JetBrains/compose-multiplatform/issues/4571
-private fun List<ResourceItem>.filterByLocale(
+private fun List<ResourceItem>.filterByLocales(
+    locales: List<LocaleQualifiers>
+): List<ResourceItem> {
+    for (locale in locales) {
+        val matched = filterBySingleLocale(locale.language, locale.script, locale.region)
+        if (!matched.isNullOrEmpty()) {
+            return matched
+        }
+    }
+
+    // Default: items with NO locale qualifiers at all
+    return filter { item ->
+        item.qualifiers.none { it is LanguageQualifier || it is ScriptQualifier || it is RegionQualifier }
+    }
+}
+
+private fun ResourceItem.scriptQualifier(): ScriptQualifier? =
+    qualifiers.filterIsInstance<ScriptQualifier>().firstOrNull()
+
+private fun ResourceItem.regionQualifier(): RegionQualifier? =
+    qualifiers.filterIsInstance<RegionQualifier>().firstOrNull()
+
+// CLDR likely subtags used when a values-* folder omits script (e.g. values-zh-rTW).
+private fun likelyScript(language: String, region: String): String? = when (language) {
+    "zh" -> if (region in TRADITIONAL_CHINESE_REGIONS) "Hant" else "Hans"
+    else -> null
+}
+
+private val TRADITIONAL_CHINESE_REGIONS = setOf("TW", "HK", "MO")
+
+private fun ResourceItem.compatibleWithRequestedScript(requested: ScriptQualifier): Boolean {
+    val explicit = scriptQualifier()
+    if (explicit != null) return explicit == requested
+    val inferred = likelyScript(
+        language = qualifiers.filterIsInstance<LanguageQualifier>().firstOrNull()?.language.orEmpty(),
+        region = regionQualifier()?.region.orEmpty()
+    )
+    return inferred == null || inferred == requested.script
+}
+
+private fun List<ResourceItem>.narrowByRegion(
+    region: RegionQualifier,
+    allowOtherRegions: Boolean
+): List<ResourceItem> {
+    if (isEmpty()) return emptyList()
+    val regionCode = region.region
+    if (regionCode.isNotEmpty()) {
+        val exact = filter { it.regionQualifier()?.region == regionCode }
+        if (exact.isNotEmpty()) return exact
+    }
+    val noRegion = filter { it.regionQualifier() == null }
+    if (noRegion.isNotEmpty()) return noRegion
+    if (allowOtherRegions) {
+        val otherRegions = filter { it.regionQualifier() != null }
+        if (otherRegions.size == 1) return otherRegions
+        if (otherRegions.isNotEmpty()) {
+            // Android parent-locale matching: any same-language region is a match.
+            // Pick one file so matching does not fail with "more than one file".
+            return listOf(
+                otherRegions.minWith(
+                    compareBy({ it.regionQualifier()!!.region }, { it.path })
+                )
+            )
+        }
+    }
+    return emptyList()
+}
+
+private fun List<ResourceItem>.filterBySingleLocale(
     language: LanguageQualifier,
     script: ScriptQualifier,
     region: RegionQualifier
-): List<ResourceItem> {
-    // Case 5: items with NO locale qualifiers at all (default)
-    val noLocaleItems = filter { item ->
-        item.qualifiers.none { it is LanguageQualifier || it is ScriptQualifier || it is RegionQualifier }
-    }
-
+): List<ResourceItem>? {
     val withLanguage = filter { item ->
         item.qualifiers.any { it == language }
     }
-    if (withLanguage.isEmpty()) return noLocaleItems
+    if (withLanguage.isEmpty()) return null
 
-    // Case 1 & 2: language + script items, narrowed by region (exact script+region or script only)
-    val withScript = withLanguage.filter { item ->
-        item.qualifiers.any { it == script }
-    }
-    val byScriptAndRegion = withScript.filterBy(region)
-    if (byScriptAndRegion.isNotEmpty()) return byScriptAndRegion
+    if (!script.isEmpty()) {
+        val explicitScript = withLanguage.filter { it.scriptQualifier() == script }
+        val explicitMatch = explicitScript.narrowByRegion(region, allowOtherRegions = false)
+        if (explicitMatch.isNotEmpty()) return explicitMatch
 
-    // Case 3 & 4: language items without a script qualifier, narrowed by region (exact region or language only)
-    val withDefaultScript = withLanguage.filter { item ->
-        item.qualifiers.none { it is ScriptQualifier }
-    }
-    val byDefaultScriptAndRegion = withDefaultScript.filterBy(region)
-    if (byDefaultScriptAndRegion.isNotEmpty()) return byDefaultScriptAndRegion
+        val inferredScript = withLanguage.filter { item ->
+            item.scriptQualifier() == null && item.compatibleWithRequestedScript(script)
+        }
+        val inferredMatch = inferredScript.narrowByRegion(region, allowOtherRegions = true)
+        if (inferredMatch.isNotEmpty()) return inferredMatch
 
-    // Fallback: don't cross scripts when one was requested (zh-Hans must not fall back to zh-Hant)
-    // When the environment script is empty, fall back to script-tagged items only if nothing else matches.
-    if (script.isEmpty()) {
-        val byRegion = withLanguage.filterBy(region)
-        if (byRegion.isNotEmpty()) return byRegion
+        return null
     }
 
-    return noLocaleItems
+    val withDefaultScript = withLanguage.filter { it.scriptQualifier() == null }
+    val defaultScriptMatch = withDefaultScript.narrowByRegion(region, allowOtherRegions = true)
+    if (defaultScriptMatch.isNotEmpty()) return defaultScriptMatch
+
+    val byRegion = withLanguage.narrowByRegion(region, allowOtherRegions = true)
+    if (byRegion.isNotEmpty()) return byRegion
+
+    return null
 }
+
+internal fun List<ResourceItem>.filterByLocale(
+    language: LanguageQualifier,
+    script: ScriptQualifier,
+    region: RegionQualifier
+): List<ResourceItem> = filterByLocales(listOf(LocaleQualifiers(language, script, region)))
