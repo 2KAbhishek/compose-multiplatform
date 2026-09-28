@@ -7,12 +7,16 @@ import platform.Foundation.NSLocaleScriptCode
 import platform.Foundation.NSUserDefaults
 
 internal fun applePreferredLocales(): List<LocaleQualifiers> {
-    val tags = NSUserDefaults.standardUserDefaults.stringArrayForKey("AppleLanguages")
+    val defaults = NSUserDefaults.standardUserDefaults
+    val tags = defaults.stringArrayForKey("AppleLanguages")
         ?.mapNotNull { it as? String }
         .orEmpty()
-    return tags.map { localeQualifiersOf(NSLocale(it)) }.ifEmpty {
-        listOf(localeQualifiersOf(NSLocale("en")))
+    if (tags.isNotEmpty()) {
+        return tags.map { localeQualifiersOf(NSLocale(it)) }
     }
+    // AppleLanguages is the preferred-language list. AppleLocale is the current locale id.
+    val current = defaults.stringForKey("AppleLocale") ?: return emptyList()
+    return listOf(localeQualifiersOf(NSLocale(current)))
 }
 
 private fun localeQualifiersOf(loc: NSLocale): LocaleQualifiers {

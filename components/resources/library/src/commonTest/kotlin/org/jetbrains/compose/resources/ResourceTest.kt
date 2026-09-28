@@ -220,7 +220,7 @@ class ResourceTest {
     }
 
     @Test
-    fun testGetPathByPrioritizedLocales() {
+    fun testPrioritizedLocalesExactRegionThenLanguageThenDefault() {
         val resource = DrawableResource(
             id = "ImageResource:multilocale_test",
             items = setOf(
@@ -234,13 +234,6 @@ class ResourceTest {
             )
         )
 
-        fun multiLocaleEnv(vararg locales: LocaleQualifiers) = ResourceEnvironment(
-            locales = locales.toList(),
-            theme = LIGHT,
-            density = MDPI
-        )
-
-        // Case 1: First preferred locale matches exact region
         assertEquals(
             "fr-FR",
             resource.getResourceItemByEnvironment(
@@ -252,8 +245,7 @@ class ResourceTest {
             ).path
         )
 
-        // Case 2: Same language, other region still matches (Android parent-locale).
-        // fr-CA with only fr-FR must not skip French for Spanish.
+        // Unique sibling region (fr-CA with only fr-FR) is Android parent-locale matching.
         assertEquals(
             "fr-FR",
             resource.getResourceItemByEnvironment(
@@ -265,8 +257,6 @@ class ResourceTest {
             ).path
         )
 
-        // Case 3: First preferred locale (it-IT) has no match, second preferred locale (pt-BR) has no match,
-        // third preferred locale (de-DE) matches base "de"
         assertEquals(
             "de",
             resource.getResourceItemByEnvironment(
@@ -278,7 +268,6 @@ class ResourceTest {
             ).path
         )
 
-        // Case 4: None of the preferred locales match -> fallback to default
         assertEquals(
             "default",
             resource.getResourceItemByEnvironment(
@@ -289,9 +278,10 @@ class ResourceTest {
                 )
             ).path
         )
+    }
 
-        // Case 5: Regional fallback within primary language takes precedence over secondary language
-        // (fr-CA matches base "fr" when base "fr" exists)
+    @Test
+    fun testLanguageWithoutRegionBeatsLaterLocale() {
         val resourceWithBaseFr = DrawableResource(
             id = "ImageResource:base_fr_test",
             items = setOf(
@@ -310,27 +300,6 @@ class ResourceTest {
             ).path
         )
 
-        // Case 6: Script isolation across prioritized locales
-        // zh-Hans-CN must not cross to zh-Hant; it should advance to second preferred locale (en)
-        val resourceWithScript = DrawableResource(
-            id = "ImageResource:script_fallback_test",
-            items = setOf(
-                ResourceItem(setOf(), "default", -1, -1),
-                ResourceItem(setOf(LanguageQualifier("zh"), ScriptQualifier("Hant")), "zh-Hant", -1, -1),
-                ResourceItem(setOf(LanguageQualifier("en")), "en", -1, -1)
-            )
-        )
-        assertEquals(
-            "en",
-            resourceWithScript.getResourceItemByEnvironment(
-                multiLocaleEnv(
-                    LocaleQualifiers("zh", "Hans", "CN"),
-                    LocaleQualifiers("en", "", "US")
-                )
-            ).path
-        )
-
-        // Case 7: English tagged as values-en beats a later Spanish locale
         val resourceWithEnAndEs = DrawableResource(
             id = "ImageResource:en_es_test",
             items = setOf(
@@ -348,8 +317,10 @@ class ResourceTest {
                 )
             ).path
         )
+    }
 
-        // Case 8: Unqualified values/ is last resort, not English. en-IN then es → es
+    @Test
+    fun testUnqualifiedValuesIsLastResortNotEnglish() {
         val resourceDefaultAndEs = DrawableResource(
             id = "ImageResource:default_es_test",
             items = setOf(
@@ -366,18 +337,43 @@ class ResourceTest {
                 )
             ).path
         )
+    }
 
-        // Case 9: Region-only Chinese folders pick likely script (CLDR)
+    @Test
+    fun testScriptMismatchAdvancesToNextPreferredLocale() {
+        val resourceWithScript = DrawableResource(
+            id = "ImageResource:script_fallback_test",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("zh"), ScriptQualifier("Hant")), "zh-Hant", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("en")), "en", -1, -1)
+            )
+        )
+        assertEquals(
+            "en",
+            resourceWithScript.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("zh", "Hans", "CN"),
+                    LocaleQualifiers("en", "", "US")
+                )
+            ).path
+        )
+    }
+
+    @Test
+    fun testRegionOnlyChineseDoesNotGuessLikelyScript() {
         val resourceZhRegionOnly = DrawableResource(
             id = "ImageResource:zh_region_test",
             items = setOf(
                 ResourceItem(setOf(), "default", -1, -1),
                 ResourceItem(setOf(LanguageQualifier("zh"), RegionQualifier("CN")), "zh-rCN", -1, -1),
                 ResourceItem(setOf(LanguageQualifier("zh"), RegionQualifier("TW")), "zh-rTW", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("en")), "en", -1, -1),
             )
         )
+        // Two sibling regions: do not infer Hant/Hans from CLDR; advance to English.
         assertEquals(
-            "zh-rTW",
+            "en",
             resourceZhRegionOnly.getResourceItemByEnvironment(
                 multiLocaleEnv(
                     LocaleQualifiers("zh", "Hant", "US"),
@@ -386,7 +382,7 @@ class ResourceTest {
             ).path
         )
         assertEquals(
-            "zh-rCN",
+            "en",
             resourceZhRegionOnly.getResourceItemByEnvironment(
                 multiLocaleEnv(
                     LocaleQualifiers("zh", "Hans", ""),
@@ -394,19 +390,51 @@ class ResourceTest {
                 )
             ).path
         )
+        assertEquals(
+            "zh-rTW",
+            resourceZhRegionOnly.getResourceItemByEnvironment(
+                multiLocaleEnv(LocaleQualifiers("zh", "Hant", "TW"))
+            ).path
+        )
+    }
 
-        // Case 10: several other-region folders must resolve to one file, not "more than one file"
+    @Test
+    fun testUniqueSiblingRegionMatchesAmbiguousSiblingsDoNot() {
         val resourceSiblingRegions = DrawableResource(
             id = "ImageResource:sibling_regions",
             items = setOf(
                 ResourceItem(setOf(), "default", -1, -1),
                 ResourceItem(setOf(LanguageQualifier("fr"), RegionQualifier("FR")), "fr-FR", -1, -1),
                 ResourceItem(setOf(LanguageQualifier("fr"), RegionQualifier("BE")), "fr-BE", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("es")), "es", -1, -1),
             )
         )
         assertEquals(
-            "fr-BE",
+            "es",
             resourceSiblingRegions.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("fr", "", "CA"),
+                    LocaleQualifiers("es", "", "US")
+                )
+            ).path
+        )
+        assertEquals(
+            "default",
+            resourceSiblingRegions.getResourceItemByEnvironment(
+                multiLocaleEnv(LocaleQualifiers("fr", "", "CA"))
+            ).path
+        )
+
+        val uniqueSibling = DrawableResource(
+            id = "ImageResource:unique_sibling",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("fr"), RegionQualifier("FR")), "fr-FR", -1, -1),
+            )
+        )
+        assertEquals(
+            "fr-FR",
+            uniqueSibling.getResourceItemByEnvironment(
                 multiLocaleEnv(LocaleQualifiers("fr", "", "CA"))
             ).path
         )
@@ -453,4 +481,10 @@ class ResourceTest {
         )
         assertEquals(system, selectResourceLocales(emptyList(), system))
     }
+
+    private fun multiLocaleEnv(vararg locales: LocaleQualifiers) = ResourceEnvironment(
+        locales = locales.toList(),
+        theme = LIGHT,
+        density = MDPI
+    )
 }

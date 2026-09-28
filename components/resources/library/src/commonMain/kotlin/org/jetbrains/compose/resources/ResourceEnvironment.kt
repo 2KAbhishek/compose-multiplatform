@@ -229,12 +229,14 @@ private fun List<ResourceItem>.filterByDensity(density: DensityQualifier): List<
 // 2) language + script (no region) -> use it
 // 3) language + region (no script) -> use it
 // 4) language only (no script, no region) -> use it
-// 5) same language, other region (Android parent-locale), when allowed
+// 5) same language, exactly one other-region folder (Android parent/child locale)
+// If several other-region folders match, skip this locale rather than guessing.
 // If none of the preferred locales match:
 // 6) items with NO locale qualifiers at all (default)
 // When the environment script is empty, prefer items without
 // a ScriptQualifier first; fall back to script-tagged items only if nothing else matches.
-// issue: https://github.com/JetBrains/compose-multiplatform/issues/4571
+// https://youtrack.jetbrains.com/issue/CMP-6840
+// https://github.com/JetBrains/compose-multiplatform/issues/4571
 private fun List<ResourceItem>.filterByLocales(
     locales: List<LocaleQualifiers>
 ): List<ResourceItem> {
@@ -257,22 +259,9 @@ private fun ResourceItem.scriptQualifier(): ScriptQualifier? =
 private fun ResourceItem.regionQualifier(): RegionQualifier? =
     qualifiers.filterIsInstance<RegionQualifier>().firstOrNull()
 
-// CLDR likely subtags used when a values-* folder omits script (e.g. values-zh-rTW).
-private fun likelyScript(language: String, region: String): String? = when (language) {
-    "zh" -> if (region in TRADITIONAL_CHINESE_REGIONS) "Hant" else "Hans"
-    else -> null
-}
-
-private val TRADITIONAL_CHINESE_REGIONS = setOf("TW", "HK", "MO")
-
 private fun ResourceItem.compatibleWithRequestedScript(requested: ScriptQualifier): Boolean {
-    val explicit = scriptQualifier()
-    if (explicit != null) return explicit == requested
-    val inferred = likelyScript(
-        language = qualifiers.filterIsInstance<LanguageQualifier>().firstOrNull()?.language.orEmpty(),
-        region = regionQualifier()?.region.orEmpty()
-    )
-    return inferred == null || inferred == requested.script
+    val explicit = scriptQualifier() ?: return true
+    return explicit == requested
 }
 
 private fun List<ResourceItem>.narrowByRegion(
@@ -289,16 +278,9 @@ private fun List<ResourceItem>.narrowByRegion(
     if (noRegion.isNotEmpty()) return noRegion
     if (allowOtherRegions) {
         val otherRegions = filter { it.regionQualifier() != null }
+        // A single sibling region is Android's "child locale" fallback (fr-CA -> fr-FR).
+        // Several siblings would require guessing; leave this locale unmatched instead.
         if (otherRegions.size == 1) return otherRegions
-        if (otherRegions.isNotEmpty()) {
-            // Android parent-locale matching: any same-language region is a match.
-            // Pick one file so matching does not fail with "more than one file".
-            return listOf(
-                otherRegions.minWith(
-                    compareBy({ it.regionQualifier()!!.region }, { it.path })
-                )
-            )
-        }
     }
     return emptyList()
 }
