@@ -68,6 +68,21 @@ class JvmPreferredLocalesTest {
     }
 
     @Test
+    fun parseMacosDefaultsLanguages() {
+        val output = """
+            (
+                "it-US",
+                "hi-US",
+                "es-US",
+                "en-US"
+            )
+        """.trimIndent()
+        val locales = parseMacosLanguagesDefaults(output)
+        assertEquals(listOf("it", "hi", "es", "en"), locales.map { it.language.language })
+        assertEquals(listOf("US", "US", "US", "US"), locales.map { it.region.region })
+    }
+
+    @Test
     fun jvmPreferredLocalesIsNeverEmpty() {
         assertTrue(jvmPreferredLocales().isNotEmpty())
     }

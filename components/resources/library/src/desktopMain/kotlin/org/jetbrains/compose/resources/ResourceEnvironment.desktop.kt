@@ -41,10 +41,46 @@ private fun loadPreferredLocales(): List<LocaleQualifiers> {
     val fromWindows = windowsPreferredLocales()
     if (fromWindows.isNotEmpty()) return fromWindows
 
+    val fromMac = macosPreferredLocales()
+    if (fromMac.isNotEmpty()) return fromMac
+
     val fromEnv = unixLanguageList()
     if (fromEnv.isNotEmpty()) return fromEnv
 
     return listOf(localeQualifiersOf(Locale.getDefault()))
+}
+
+private const val MACOS_QUERY_TIMEOUT_SECONDS = 2L
+
+private fun macosPreferredLocales(): List<LocaleQualifiers> {
+    if (!System.getProperty("os.name").orEmpty().contains("mac", ignoreCase = true)) {
+        return emptyList()
+    }
+    return try {
+        val process = ProcessBuilder("/usr/bin/defaults", "read", "-g", "AppleLanguages")
+            .redirectErrorStream(true)
+            .start()
+        val output = try {
+            if (!process.waitFor(MACOS_QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS) || process.exitValue() != 0) {
+                return emptyList()
+            }
+            process.inputStream.bufferedReader().readText()
+        } finally {
+            process.destroyForcibly()
+        }
+        parseMacosLanguagesDefaults(output)
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
+internal fun parseMacosLanguagesDefaults(output: String): List<LocaleQualifiers> {
+    return output.lineSequence()
+        .map { it.trim().trim('"', '\'', ',', '(', ')', ';') }
+        .filter { it.isNotEmpty() && !it.contains(' ') }
+        .mapNotNull { parseJvmLocaleTag(it) }
+        .distinct()
+        .toList()
 }
 
 private fun unixLanguageList(): List<LocaleQualifiers> {
