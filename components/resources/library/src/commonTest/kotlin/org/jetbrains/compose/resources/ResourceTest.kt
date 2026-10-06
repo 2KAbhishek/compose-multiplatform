@@ -396,6 +396,25 @@ class ResourceTest {
                 multiLocaleEnv(LocaleQualifiers("zh", "Hant", "TW"))
             ).path
         )
+
+        val singleTaiwanResource = DrawableResource(
+            id = "ImageResource:single_tw_test",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("zh"), RegionQualifier("TW")), "zh-rTW", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("en")), "en", -1, -1),
+            )
+        )
+        // Explicit Hans must not fall back to TW even when TW is the only Chinese region folder
+        assertEquals(
+            "en",
+            singleTaiwanResource.getResourceItemByEnvironment(
+                multiLocaleEnv(
+                    LocaleQualifiers("zh", "Hans", "CN"),
+                    LocaleQualifiers("en", "", "US")
+                )
+            ).path
+        )
     }
 
     @Test

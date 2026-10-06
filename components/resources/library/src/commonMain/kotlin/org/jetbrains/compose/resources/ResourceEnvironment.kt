@@ -259,11 +259,6 @@ private fun ResourceItem.scriptQualifier(): ScriptQualifier? =
 private fun ResourceItem.regionQualifier(): RegionQualifier? =
     qualifiers.filterIsInstance<RegionQualifier>().firstOrNull()
 
-private fun ResourceItem.compatibleWithRequestedScript(requested: ScriptQualifier): Boolean {
-    val explicit = scriptQualifier() ?: return true
-    return explicit == requested
-}
-
 private fun List<ResourceItem>.narrowByRegion(
     region: RegionQualifier,
     allowOtherRegions: Boolean
@@ -301,11 +296,9 @@ private fun List<ResourceItem>.filterBySingleLocale(
         val explicitMatch = explicitScript.narrowByRegion(region, allowOtherRegions = false)
         if (explicitMatch.isNotEmpty()) return explicitMatch
 
-        val inferredScript = withLanguage.filter { item ->
-            item.scriptQualifier() == null && item.compatibleWithRequestedScript(script)
-        }
-        val inferredMatch = inferredScript.narrowByRegion(region, allowOtherRegions = true)
-        if (inferredMatch.isNotEmpty()) return inferredMatch
+        val withoutScript = withLanguage.filter { it.scriptQualifier() == null }
+        val withoutScriptMatch = withoutScript.narrowByRegion(region, allowOtherRegions = false)
+        if (withoutScriptMatch.isNotEmpty()) return withoutScriptMatch
 
         return null
     }
