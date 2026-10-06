@@ -126,8 +126,10 @@ internal fun selectResourceLocales(
     if (composeLocales.size > 1) return composeLocales
     if (systemLocales.size <= 1) return composeLocales.ifEmpty { systemLocales }
     val compose = composeLocales.singleOrNull() ?: return systemLocales
-    val languageInSystem = systemLocales.any { it.language == compose.language }
-    if (!languageInSystem) return listOf(compose) + systemLocales
+    val composeInSystem = systemLocales.any {
+        it.language == compose.language && (compose.region.region.isEmpty() || it.region == compose.region)
+    }
+    if (!composeInSystem) return listOf(compose) + systemLocales
     return systemLocales
 }
 

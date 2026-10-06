@@ -5,6 +5,7 @@ import platform.Foundation.NSLocaleCountryCode
 import platform.Foundation.NSLocaleLanguageCode
 import platform.Foundation.NSLocaleScriptCode
 import platform.Foundation.NSUserDefaults
+import platform.Foundation.currentLocale
 
 internal fun applePreferredLocales(): List<LocaleQualifiers> {
     val defaults = NSUserDefaults.standardUserDefaults

@@ -514,6 +514,16 @@ class ResourceTest {
     }
 
     @Test
+    fun testSelectResourceLocalesPrependsComposeRegionOverride() {
+        val compose = listOf(LocaleQualifiers("es", "", "MX"))
+        val system = listOf(
+            LocaleQualifiers("es", "", "ES"),
+            LocaleQualifiers("en", "", "US"),
+        )
+        assertEquals(listOf(compose.single()) + system, selectResourceLocales(compose, system))
+    }
+
+    @Test
     fun testSelectResourceLocalesUsesSystemWhenComposeIsEmpty() {
         val system = listOf(
             LocaleQualifiers("hi", "", "IN"),
