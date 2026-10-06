@@ -438,6 +438,27 @@ class ResourceTest {
                 multiLocaleEnv(LocaleQualifiers("fr", "", "CA"))
             ).path
         )
+
+        // Multiple densities or themes for the same sibling region must not be treated as ambiguous
+        val uniqueSiblingMultiDensity = DrawableResource(
+            id = "ImageResource:unique_sibling_multidensity",
+            items = setOf(
+                ResourceItem(setOf(), "default", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("fr"), RegionQualifier("FR"), MDPI), "fr-FR-mdpi", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("fr"), RegionQualifier("FR"), HDPI), "fr-FR-hdpi", -1, -1),
+                ResourceItem(setOf(LanguageQualifier("fr"), RegionQualifier("FR"), XHDPI), "fr-FR-xhdpi", -1, -1),
+            )
+        )
+        assertEquals(
+            "fr-FR-hdpi",
+            uniqueSiblingMultiDensity.getResourceItemByEnvironment(
+                ResourceEnvironment(
+                    locales = listOf(LocaleQualifiers("fr", "", "CA")),
+                    theme = LIGHT,
+                    density = HDPI
+                )
+            ).path
+        )
     }
 
     @Test

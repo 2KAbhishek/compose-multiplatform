@@ -280,7 +280,8 @@ private fun List<ResourceItem>.narrowByRegion(
         val otherRegions = filter { it.regionQualifier() != null }
         // A single sibling region is Android's "child locale" fallback (fr-CA -> fr-FR).
         // Several siblings would require guessing; leave this locale unmatched instead.
-        if (otherRegions.size == 1) return otherRegions
+        val distinctRegions = otherRegions.mapNotNull { it.regionQualifier()?.region }.distinct()
+        if (distinctRegions.size == 1) return otherRegions
     }
     return emptyList()
 }
