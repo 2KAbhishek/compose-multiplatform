@@ -15,8 +15,11 @@ internal fun applePreferredLocales(): List<LocaleQualifiers> {
         return tags.map { localeQualifiersOf(NSLocale(it)) }
     }
     // AppleLanguages is the preferred-language list. AppleLocale is the current locale id.
-    val current = defaults.stringForKey("AppleLocale") ?: return emptyList()
-    return listOf(localeQualifiersOf(NSLocale(current)))
+    val current = defaults.stringForKey("AppleLocale")
+    if (current != null) {
+        return listOf(localeQualifiersOf(NSLocale(current)))
+    }
+    return listOf(localeQualifiersOf(NSLocale.currentLocale))
 }
 
 private fun localeQualifiersOf(loc: NSLocale): LocaleQualifiers {
